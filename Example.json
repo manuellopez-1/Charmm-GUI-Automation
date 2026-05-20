@@ -1,0 +1,158 @@
+[
+    {
+        "action": "click",
+        "text": "Membrane Builder",
+        "tag": "a",
+        "attrs": {
+            "id": "",
+            "href": "https://www.charmm-gui.org/?doc=input/membrane.bilayer",
+            "value": "",
+            "type": ""
+        }
+    },
+    {
+        "action": "dropdown",
+        "dropdown_name": "source",
+        "dropdown_id": "",
+        "option": "OPM"
+    },
+    {
+        "action": "type",
+        "field": "pdb_id",
+        "text": "5VKE",
+        "hit_enter": true,
+        "match_index": 0
+    },
+    {
+        "action": "check",
+        "input_type": "checkbox",
+        "name": "check_pka",
+        "value": "on",
+        "label": "",
+        "checked": true
+    },
+    {
+        "action": "next_step"
+    },
+    {
+        "action": "next_step"
+    },
+    {
+        "action": "check",
+        "input_type": "checkbox",
+        "name": "flip_checked",
+        "value": "1",
+        "label": "Flip Molecule along the Z axis",
+        "checked": true
+    },
+    {
+        "action": "next_step"
+    },
+    {
+        "action": "type",
+        "field": "hetero_wdist",
+        "text": "60",
+        "hit_enter": false,
+        "match_index": 0
+    },
+    {
+        "action": "check",
+        "input_type": "radio",
+        "name": "hetero_xy_option",
+        "value": "nlipid",
+        "label": "",
+        "checked": true
+    },
+    {
+        "action": "records",
+        "target": "liptype_number_pc",
+        "onclick": "liptype_toggle(this, \"liptype_number_pc\")"
+    },
+    {
+        "action": "type",
+        "field": "lipid_number[upper][popc]",
+        "text": "96",
+        "hit_enter": false,
+        "match_index": 0
+    },
+    {
+        "action": "type",
+        "field": "lipid_number[lower][popc]",
+        "text": "84",
+        "hit_enter": false,
+        "match_index": 0
+    },
+    {
+        "action": "click",
+        "text": "",
+        "tag": "input",
+        "attrs": {
+            "id": "hetero_size_button",
+            "value": "Show the system info",
+            "type": "button"
+        }
+    },
+    {
+        "action": "next_step"
+    },
+    {
+        "action": "dropdown",
+        "dropdown_name": "",
+        "dropdown_id": "ion_type",
+        "option": "NaCl"
+    },
+    {
+        "action": "click",
+        "text": "",
+        "tag": "input",
+        "attrs": {
+            "id": "",
+            "value": "Add Simple Ion Type",
+            "type": "button"
+        }
+    },
+    {
+        "action": "type",
+        "field": "ion_conc[]",
+        "text": ".5",
+        "hit_enter": false,
+        "match_index": 0
+    },
+    {
+        "action": "type",
+        "field": "ion_conc[]",
+        "text": ".5",
+        "hit_enter": false,
+        "match_index": 1
+    },
+    {
+        "action": "click",
+        "text": "",
+        "tag": "input",
+        "attrs": {
+            "id": "",
+            "value": "Calculate Solvent Composition",
+            "type": "button"
+        }
+    },
+    {
+        "action": "next_step"
+    },
+    {
+        "action": "next_step"
+    },
+    {
+        "action": "next_step"
+    },
+    {
+        "action": "check",
+        "input_type": "checkbox",
+        "name": "gmx_checked",
+        "value": "1",
+        "label": "GROMACS",
+        "checked": true
+    },
+    {
+        "action": "next_step"
+    }
+]
