@@ -22,8 +22,123 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium.webdriver.chrome.options import Options
 import threading
 import sys
-#import fcntl
-from contextlib import contextmanager #these mf's wanna stop me from hitting next with multiple processes at the same time
+import fcntl
+from contextlib import contextmanager #these guys wanna stop me from hitting next with multiple processes at the same time
+from urllib.parse import urlparse, parse_qs
+import re
+
+def get_jobid_from_page(browser):
+    try:
+        match = re.search(r"JOB\s*ID\s*:\s*(\d+)", browser.page_source, re.IGNORECASE)
+    except Exception:
+        return None
+    if match:
+        return match.group(1)
+    return None
+
+def parse_job_url(url):
+    q= parse_qs(urlparse(url).query)
+    return {"doc":q.get("doc",[None])[0],"step":q.get("step",[None])[0],"project": q.get("project", [None])[0],"jobid":   q.get("jobid",   [None])[0],}
+
+def open_job_monitor(username, password):
+    monitor = webdriver.Chrome()
+    monitor.get('https://charmm-gui.org/')
+    wait = WebDriverWait(monitor, 15)
+    login(username, password, wait)
+    time.sleep(5)
+    goto_job_manager(monitor)
+    return monitor
+
+def goto_job_manager(browser):
+    buttons = clicklist(browser, 1)
+    print(buttons)
+    betterclick(browser, mostsimilar('User Profile', buttons))
+    buttons = clicklist(browser, 1)
+    betterclick(browser, mostsimilar('Job IDs', buttons)) #whole lotta vibe coding
+
+
+def find_job_row(browser, jobid):
+    rows = browser.find_elements(By.XPATH, "//table//tr")
+    for r in rows:
+        cells = r.find_elements(By.TAG_NAME, "td")
+        if len(cells) < 4:
+            continue
+        try:
+            a = cells[0].find_element(By.TAG_NAME, "a")
+        except NoSuchElementException:
+            continue
+        href = a.get_attribute("href") or ""
+        row_state = parse_job_url(href)
+        if row_state.get("jobid") == str(jobid):
+            row_text = r.text.strip()
+            still_running = "done" not in row_text.lower()
+            return a, cells[3].text.strip(), still_running
+    return None, None, False
+
+def get_monitor_step(monitor, jobid):
+    monitor.refresh()
+    _, step, running = find_job_row(monitor, jobid)
+    return step, running
+
+
+def get_current_job_state(browser):
+    state = parse_job_url(browser.current_url)
+    if not state.get("jobid"):
+        state["jobid"] = get_jobid_from_page(browser)
+    return state
+
+def go_to_job_step(browser, jobid, step_value):
+    goto_job_manager(browser)
+    link, _, _ = find_job_row(browser, jobid)
+    if link is None:
+        raise RuntimeError("Could not find job " + str(jobid) + " in Job IDs manager")
+    browser.get(link.get_attribute("href"))
+    buttons = clicklist(browser, 1)
+    match = None
+    for button in buttons:
+        text = (button.get('text') or "").strip()
+        href = (button.get('attrs') or {}).get('href') or ""
+        if text == "Go" and "step=" + str(step_value) + "&" in href:
+            match = button
+    if match is not None:
+        betterclick(browser, match)
+        return
+    raise RuntimeError("No 'Go' button found for step " + str(step_value) + " on job " + str(jobid))
+
+def advance_next_step(browser, monitor, username, password, mute=1):
+    state = get_current_job_state(browser)
+    jobid, old_step = state["jobid"], state["step"]
+
+    if monitor is None:
+        monitor = open_job_monitor(username, password)
+
+    with charmmgui_submit_lock():
+        next_step = browser.find_element(By.XPATH,"//table[@class='nav_entry' and contains(normalize-space(.), 'Next Step')]")
+        next_step.click()
+
+    if not jobid:
+        print("[CASE] no-jobid: could not read jobid from URL before clicking Next Step ")
+        return browser, monitor
+    new_step = None
+    while True:
+        new_step, running = get_monitor_step(monitor, jobid)
+        print("[REFRESH] job " + str(jobid) + " still on step " + str(old_step) + " (monitor read: " + str(new_step) + ", running: " + str(running) + ")")
+        if new_step is not None and new_step != old_step and not running:
+            break
+        time.sleep(10)
+
+    print("[CASE] step-advanced: job " + str(jobid) + " moved from step " + str(old_step) + " to step " + str(new_step) + " — promoting monitor to main browser")
+    go_to_job_step(monitor, jobid, new_step)
+    new_browser = monitor
+
+    browser.close()
+    new_monitor = open_job_monitor(username, password)
+
+    return new_browser, new_monitor
+
+
+
+
 CHARMMGUI_LOCKFILE = "/tmp/charmm_gui_next_step.lock"
 
 @contextmanager #so gonna use a locking mechanism to stop multiple from submitting concurrently
@@ -34,6 +149,8 @@ def charmmgui_submit_lock():
             yield
         finally:
             fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+
 
 
 def findallsimilar(browser, entry):
@@ -173,13 +290,7 @@ def record(logs, button, filename):
 import json
 
 def record2(logs, field_name, entry_text, filename, ndx=0, hit_enter=False):
-    entry = {
-        "action": "type",
-        "field": field_name,
-        "text": entry_text,
-        "hit_enter": hit_enter,
-        "match_index": int(ndx)
-    }
+    entry = {"action": "type","field": field_name,"text": entry_text,"hit_enter": hit_enter,"match_index": int(ndx)}
     logs.append(entry)
     with open(filename, "w") as f:
         json.dump(logs, f, indent=4)
@@ -315,7 +426,7 @@ def CheckBoxRecord(logs, input_type, name, value, checked,filename, label=""):
 
 
 
-def execute(browser,which,mute,last):
+def execute(browser,which,mute,last,monitor=None, username = None, password= None):
     action = which.get('action')
     if action =='click':
         nom = which.get('text').strip()
@@ -326,7 +437,7 @@ def execute(browser,which,mute,last):
         #while A is None:
         buttons = clicklist(browser,mute) #wait for loading
         A = mostsimilar(nom,buttons)
-        #time.sleep(3)
+        time.sleep(3)
         betterclick(browser, A)
         #A['element'].click()
     elif action =='type':
@@ -345,20 +456,7 @@ def execute(browser,which,mute,last):
         if enter ==True:
             A['element'].send_keys(Keys.RETURN)
     if action == 'next_step':
-        time.sleep(30)
-        with charmmgui_submit_lock():
-            next_step = browser.find_element(
-                        By.XPATH,
-                        "//table[@class='nav_entry' and contains(normalize-space(.), 'Next Step')]"
-                    )
-            old_page = browser.find_element(By.TAG_NAME, "html")
-            next_step.click()
-            try:
-                WebDriverWait(browser, 10*60).until(EC.staleness_of(old_page))
-            except TimeoutException:
-                if mute == 0:
-                    print("[WARN] Page did not change after 10 minutes — continuing anyway")
-                return
+        browser, monitor = advance_next_step(browser, monitor, username, password, mute)
     elif action =='dropdown':
         dropname = which.get('dropdown_name')
         dropid = which.get('dropdown_id')
@@ -402,6 +500,7 @@ def execute(browser,which,mute,last):
                     break
             time.sleep(3)
         elem.click()
+    return browser, monitor
 
 def listrecords(browser,mute):
     imgs = browser.find_elements(By.XPATH, "//img[contains(@onclick, 'liptype_toggle')]")
@@ -446,29 +545,26 @@ def recordrecords(logs, target, onclick, filename):
     with open(filename, "w") as f:
         json.dump(logs, f, indent=4)
 
-def parallelsubmission(id, username, password, howmany,read):
+def parallelsubmission(id, username, password, howmany, read):
     global worker_progress
     url = 'https://www.charmm-gui.org/'
-    
+
     for i in range(int(howmany)):
-        #options = Options()
-        #options.add_argument("--headless=new")
-        #browser = webdriver.Chrome(options=options)
         browser = webdriver.Chrome()
         browser.get(url)
         wait = WebDriverWait(browser, 15)
-        login(username, password,wait)
-        
+        login(username, password, wait)
+        monitor = None  
+
         for I in range(len(read)):
             entry = read[I]
-            if I ==len(read)-1:
-                last = 1
-            else:
-                last = 0
-            execute(browser,entry,1,last)
+            last = 1 if I == len(read) - 1 else 0
+            browser, monitor = execute(browser, entry, 1, last, monitor, username, password)
             with progress_lock:
-                worker_progress[id] +=1
+                worker_progress[id] += 1
         browser.close()
+        if monitor is not None:
+            monitor.quit()
 
 def main():
     usrnm = input("Username: ")
@@ -485,6 +581,7 @@ def main():
         logs = []
 
         login(usrnm, psswrd,wait)
+        monitor = None
         clickid = 1
         while clickid !=0:
             buttontype = int(input("Button Type: Click (1), Type in (2), Drop Down (3), Bubbles (4), next (5), Extend (6),  Exit (7): "))
@@ -518,9 +615,8 @@ def main():
                     typebox['element'].send_keys(Keys.RETURN)
                 record2(logs, inp, inp2,Actionfile, indexinquestion,hitenter)
             elif buttontype ==5:
-                next_step = browser.find_element(By.XPATH,"//table[@class='nav_entry' and contains(normalize-space(.), 'Next Step')]") #turns out next isn't a button but a link
-                NextRecorder(logs,Actionfile)
-                next_step.click()
+                NextRecorder(logs, Actionfile)
+                browser, monitor = advance_next_step(browser, monitor, usrnm, psswrd, 0)
             elif buttontype == 3:
                 drops = listDropDowns(browser,0)
                 usr = int(input("Select dropdown index: "))
@@ -549,7 +645,7 @@ def main():
         with open(Actionfile,'r') as f:
             read = json.load(f)
 
-        numcores =  os.cpu_count()-1 #this way there's a free core for the other functions of the computer?
+        numcores =  2 #this way there's a free core for the other functions of the computer?
         totalcreations = int(input('Total Iterations: '))
         ntasks = totalcreations//numcores 
         extraones = totalcreations% numcores
@@ -595,6 +691,7 @@ def main():
 
         wait = WebDriverWait(browser, 15)
         login(usrnm, psswrd,wait)
+        monitor = None
         time.sleep(3)
         if os.path.isfile(Actionfile):
             with open(Actionfile, 'r') as f:
@@ -602,7 +699,7 @@ def main():
         else:
             logs = []
         for entry in logs:
-            execute(browser, entry,1,0)
+            browser, monitor = execute(browser, entry, 1, 0, monitor, usrnm, psswrd)
         
         clickid = 1
         while clickid !=0:
@@ -638,9 +735,8 @@ def main():
                     typebox['element'].send_keys(Keys.RETURN)
                 record2(logs, inp, inp2,Actionfile, indexinquestion,hitenter)
             elif buttontype ==5:
-                next_step = browser.find_element(By.XPATH,"//table[@class='nav_entry' and contains(normalize-space(.), 'Next Step')]") #turns out next isn't a button but a link
                 NextRecorder(logs,Actionfile)
-                next_step.click()
+                browser, monitor = advance_next_step(browser, monitor, usrnm, psswrd, 0)
             elif buttontype == 3:
                 drops = listDropDowns(browser,0)
                 usr = int(input("Select dropdown index: "))
